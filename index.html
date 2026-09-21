@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Barcode Scanner</title>
+<style>
+body{font-family:Arial,sans-serif;margin:0;background:#f5f7fa;color:#17202a}
+main{max-width:520px;margin:auto;padding:20px}
+h1{font-size:24px}
+.card{background:white;border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 2px 10px #0001}
+button,input{font-size:18px;padding:14px;border-radius:10px;border:1px solid #ccd3da;box-sizing:border-box}
+button{width:100%;background:#1769aa;color:white;border:0;margin-top:8px}
+input{width:100%}
+video{width:100%;border-radius:12px;background:#111;display:none}
+#status{font-weight:bold;margin:10px 0}
+.qty{font-size:42px;font-weight:700;text-align:center}
+small{color:#667}
+</style>
+</head>
+<body>
+<main>
+<h1>📦 Stock Barcode Scanner</h1>
+<div class="card">
+<div id="status">Ready. Add products below, then start scanning.</div>
+<video id="video" autoplay playsinline></video>
+<button id="start">Start Camera & Scan</button>
+<button id="stop" style="display:none;background:#555">Stop Camera</button>
+</div>
+<div class="card">
+<h2>Products</h2>
+<input id="barcode" placeholder="Barcode">
+<input id="name" placeholder="Product name" style="margin-top:8px">
+<button id="add">Add / Update Product</button>
+<div id="products"></div>
+</div>
+<div class="card">
+<h2>Export</h2>
+<button id="export">Download CSV Inventory</button>
+<small>Each successful scan adds exactly 1 to the matching product.</small>
+</div>
+</main>
+<script>
+const products = {};
+const $ = id => document.getElementById(id);
+function render(){
+  const box=$("products"); box.innerHTML="";
+  Object.values(products).forEach(p=>{
+    const d=document.createElement("div");
+    d.className="card";
+    d.innerHTML=`<b>${p.name}</b><br><small>${p.barcode}</small><div class="qty">${p.qty}</div>`;
+    box.appendChild(d);
+  });
+}
+$("add").onclick=()=>{
+  const b=$("barcode").value.trim(), n=$("name").value.trim();
+  if(!b||!n){$("status").textContent="Enter a barcode and product name.";return}
+  products[b] ||= {barcode:b,name:n,qty:0};
+  products[b].name=n; render();
+  $("status").textContent="Product saved. Ready to scan.";
+  $("barcode").value=""; $("name").value="";
+};
+
+let stream=null, detector=null, timer=null, last="", lastTime=0;
+async function start(){
+  if(!("mediaDevices" in navigator) || !navigator.mediaDevices.getUserMedia){
+    $("status").textContent="Camera access is not supported in this browser.";
+    return;
+  }
+  if(!("BarcodeDetector" in window)){
+    $("status").textContent="This browser does not expose BarcodeDetector. Use Chrome on a supported Android device, or use the manual barcode field.";
+    return;
+  }
+  detector=new BarcodeDetector();
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
+    $("video").srcObject=stream; $("video").style.display="block";
+    $("start").style.display="none"; $("stop").style.display="block";
+    $("status").textContent="Scanning…";
+    timer=setInterval(scanFrame,350);
+  }catch(e){$("status").textContent="Camera permission was not granted."; }
+}
+async function scanFrame(){
+  if(!stream) return;
+  try{
+    const codes=await detector.detect($("video"));
+    if(!codes.length) return;
+    const b=(codes[0].rawValue||"").trim();
+    if(!b) return;
+    const now=Date.now();
+    if(b===last && now-lastTime<1200) return;
+    last=b; lastTime=now;
+    if(!products[b]){
+      $("barcode").value=b;
+      $("status").textContent="New barcode detected. Enter the product name, then tap Add / Update Product.";
+      return;
+    }
+    products[b].qty++;
+    render();
+    $("status").textContent=`✓ ${products[b].name}: ${products[b].qty}`;
+  }catch(e){}
+}
+function stop(){
+  clearInterval(timer); timer=null;
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  $("video").style.display="none"; $("start").style.display="block"; $("stop").style.display="none";
+  $("status").textContent="Camera stopped.";
+}
+$("start").onclick=start; $("stop").onclick=stop;
+$("export").onclick=()=>{
+  const rows=[["Barcode","Product Name","Quantity"]];
+  Object.values(products).forEach(p=>rows.push([p.barcode,p.name,p.qty]));
+  const csv=rows.map(r=>r.map(x=>`"${String(x).replaceAll('"','""')}"`).join(",")).join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download="stock_inventory.csv"; a.click();
+};
+render();
+</script>
+</body>
+</html>
